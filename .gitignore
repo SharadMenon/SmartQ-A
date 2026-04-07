@@ -1,0 +1,37 @@
+# Virtual environment
+smart_qa_env/
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Database
+chroma_db/
+
+# Documents & Presentations
+*.pdf
+*.pptx
+*.ppt
+*.docx
+*.txt
+
+# Videos & Media
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wmv
+*.png
+*.jpg
+*.jpeg
+
+# Extracted texts
+idf_extracted.txt
+
+# Do not ignore Python and Markdown files
+!*.py
+!*.md
+!requirements.txt
