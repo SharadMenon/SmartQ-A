@@ -1,605 +1,284 @@
-# Technical Architecture & Implementation Details
+# 🧠 SmartQ-A — Smart Document & Video Q&A Assistant
 
-## 📐 System Architecture Deep Dive
+> An AI-powered Retrieval-Augmented Generation (RAG) assistant that lets you upload PDFs, text documents, and educational videos — then ask natural language questions and get intelligent, contextually grounded answers.
 
-### High-Level Architecture
+---
+
+## 📸 Overview
+
+SmartQ-A combines a modern Streamlit web UI with a powerful backend pipeline that can ingest multiple document types, transcribe speech from videos, extract visual keyframes, and answer questions using a locally running LLM. It supports multi-document sessions with intelligent media-type routing so you can ask "summarize the video" or "what does the PDF say about X" and get the right context back every time.
+
+---
+
+## ✨ Features
+
+- **Multi-format ingestion** — Upload PDFs, plain text/markdown files, and video files (`.mp4`, `.avi`, `.mov`, `.mkv`)
+- **Video speech transcription** — Automatically extracts audio via FFmpeg and transcribes it using OpenAI Whisper
+- **Visual keyframe analysis** — Samples 10 evenly spaced frames and classifies visual content using Google's Vision Transformer (ViT)
+- **Semantic chunking with overlap** — Splits content into overlapping ~800-character chunks with 200-character context carry-over for better RAG recall
+- **Dense vector search** — Embeds all content using `sentence-transformers/all-MiniLM-L6-v2` (384-dim) and retrieves top-16 chunks via cosine similarity
+- **Media-type routing** — Automatically detects whether a query is asking about a video, PDF, or both, and routes context accordingly
+- **LLM-powered answers** — Sends retrieved context to a locally running Ollama instance (`neural-chat` model) for grounded, hallucination-resistant responses
+- **Persistent session chat** — Full chat history maintained across queries within a session
+- **Multi-document awareness** — Groups retrieved chunks by source document to prevent cross-document answer contamination
+
+---
+
+## 🗂️ Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   User Interface Layer                   │
-│              (Command-Line Interface)                    │
-└────────────────────┬────────────────────────────────────┘
-                     │
-┌────────────────────▼────────────────────────────────────┐
-│              Application Core Layer                      │
-│  ┌─────────────────────────────────────────────┐        │
-│  │  Main Controller (smart_qa_complete.py)     │        │
-│  │  • Command parsing                          │        │
-│  │  • Workflow orchestration                   │        │
-│  │  • State management                         │        │
-│  └─────────────────────────────────────────────┘        │
-└────────────────────┬────────────────────────────────────┘
-                     │
-┌────────────────────▼────────────────────────────────────┐
-│              Processing Pipeline Layer                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │   Content    │  │  Chunking    │  │  Embedding   │  │
-│  │  Extraction  │→ │   Engine     │→ │  Generator   │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└────────────────────┬────────────────────────────────────┘
-                     │
-┌────────────────────▼────────────────────────────────────┐
-│              Data Management Layer                       │
-│  ┌──────────────────────────────────────────────┐       │
-│  │  In-Memory Document Store                    │       │
-│  │  documents = {                               │       │
-│  │    'doc_name': [                             │       │
-│  │      {'id': str, 'text': str,                │       │
-│  │       'embedding': np.array, 'type': str}    │       │
-│  │    ]                                         │       │
-│  │  }                                           │       │
-│  └──────────────────────────────────────────────┘       │
-└────────────────────┬────────────────────────────────────┘
-                     │
-┌────────────────────▼────────────────────────────────────┐
-│             External Services Layer                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │   ChromaDB   │  │    Ollama    │  │   HF Models  │  │
-│  │  (Optional)  │  │   (LLM API)  │  │  (Embeddings)│  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└─────────────────────────────────────────────────────────┘
+SmartQ-A-main/
+├── app_gui.py              # Streamlit web UI (entry point)
+├── smart_qa_complete.py    # Core backend: ingestion, chunking, embedding, search, LLM
+├── extract_idf.py          # Utility for extracting content metadata
+├── test_routing.py         # Tests for media-type query routing logic
+├── requirements.txt        # All Python dependencies
+└── README.md               # This file
 ```
 
 ---
 
-## 🔧 Component Breakdown
+## 🏗️ Architecture
 
-### 1. Content Extraction Components
-
-#### 1.1 PDF Extractor
-```python
-Technology: PyPDF2.PdfReader
-Input: .pdf file path
-Process:
-  1. Open file in binary read mode
-  2. Iterate through pages
-  3. Extract text per page
-  4. Concatenate with newlines
-Output: Raw text string
-
-Performance:
-  - Speed: ~2-5 pages/second
-  - Memory: O(n) where n = file size
-  - Limitations: Image-based PDFs return empty text
+```
+┌──────────────────────────────────────────────────────────┐
+│                  Streamlit Web UI (app_gui.py)            │
+│   Sidebar: File Upload & Status  │  Main: Chat Interface  │
+└───────────────────┬──────────────────────────────────────┘
+                    │
+┌───────────────────▼──────────────────────────────────────┐
+│              Core Backend (smart_qa_complete.py)          │
+│                                                           │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐  │
+│  │  Ingestion  │  │  Chunking &  │  │  Semantic Search│  │
+│  │  Pipeline   │→ │  Embedding   │→ │  + LLM Q&A      │  │
+│  └─────────────┘  └──────────────┘  └─────────────────┘  │
+│        │                                                  │
+│  ┌─────▼──────────────────────────────────────────────┐  │
+│  │          In-Memory Vector Store (documents {})      │  │
+│  └────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────┘
+                    │                          │
+      ┌─────────────▼──────┐      ┌────────────▼───────────┐
+      │  HuggingFace Models│      │  Ollama (Local LLM)    │
+      │  • all-MiniLM-L6-v2│      │  • neural-chat         │
+      │  • ViT (vision)    │      │  localhost:11434        │
+      │  • Whisper (audio) │      └────────────────────────┘
+      └────────────────────┘
 ```
 
-#### 1.2 Video Analyzer (EnhancedVideoAnalyzerWithAudio)
-```python
-Technology: OpenCV (cv2), FFmpeg, Whisper
-Input: .mp4/.avi/.mov/.mkv file path
+### Ingestion Pipeline (per file type)
 
-Process Flow:
-  Step 1: Video Metadata Extraction
-    - Total frames: cv2.CAP_PROP_FRAME_COUNT
-    - FPS: cv2.CAP_PROP_FPS
-    - Duration calculation: frames / FPS
-  
-  Step 2: Audio Extraction (extract_audio_from_video)
-    - FFmpeg command: 
-      ffmpeg -i video.mp4 -q:a 9 -ac 1 -ar 16000 audio.wav
-    - Parameters:
-      • -q:a 9: Audio quality (0-9, 9=smallest)
-      • -ac 1: Mono audio (single channel)
-      • -ar 16000: Sample rate 16kHz (Whisper optimized)
-  
-  Step 3: Speech Transcription (transcribe_audio_simple)
-    - Model: openai/whisper-base
-    - Input: 16kHz WAV file
-    - Process: Automatic Speech Recognition pipeline
-    - Output: Text transcript with timestamps
-    - Cleanup: Delete temporary audio file
-  
-  Step 4: Visual Frame Analysis
-    - Sample 10 keyframes evenly distributed
-    - Frame selection: np.linspace(0, total_frames-1, 10)
-    - Per frame:
-      • Extract frame at specific index
-      • Convert BGR → RGB color space
-      • Convert to PIL Image
-      • Calculate timestamp (frame_idx / FPS)
-      • Vision classification (if enabled)
-  
-  Step 5: Vision Classification (Optional)
-    - Model: google/vit-base-patch16-224
-    - Input: PIL Image (RGB)
-    - Output: Top-3 predicted labels with confidence
-    - Example: ["blackboard", "classroom", "lecture"]
+| File Type | Extraction Method | Output |
+|-----------|------------------|--------|
+| `.pdf` | PyPDF2 page-by-page text extraction | Raw text string |
+| `.txt` / `.md` | Python `open()` with UTF-8 | Raw text string |
+| `.mp4` / `.avi` / `.mov` / `.mkv` | FFmpeg → WAV → Whisper transcription + OpenCV frames + ViT vision | Combined transcript + visual labels |
 
-Output: 
-  - transcript: String (full speech text)
-  - keyframes_data: List[Dict] with timestamp, seconds, vision labels
-  - duration_seconds: Float
+### Search & Routing
 
-Performance:
-  - Audio extraction: ~30 seconds for 10-min video
-  - Transcription: ~2-5x real-time (GPU: ~1x real-time)
-  - Frame analysis: ~1-2 seconds per frame
-  - Total: ~5-10 minutes for 10-min video (first run)
-```
+The search function (`search()`) performs global cosine similarity ranking across all loaded chunks, then applies media-type routing based on keywords detected in the query:
 
-#### 1.3 Text Document Extractor
-```python
-Technology: Python built-in open()
-Input: .txt/.md file path
-Process:
-  1. Open with UTF-8 encoding
-  2. Read entire content
-  3. Handle encoding errors gracefully
-Output: Raw text string
+- `"video"` only → returns only video-type chunks
+- `"pdf"` / `"document"` only → returns only PDF/document-type chunks  
+- `"both"` / `"all"` or explicit mix → balanced sampling across all loaded documents
+- No keyword → returns globally top-ranked chunks regardless of type
 
-Performance:
-  - Speed: Instant (<1 second for most files)
-  - Memory: O(n) where n = file size
+---
+
+## ⚙️ Prerequisites
+
+### System Dependencies
+
+- **Python 3.9+**
+- **[FFmpeg](https://ffmpeg.org/download.html)** — Required for video audio extraction
+- **[Ollama](https://ollama.com/)** — Required to run the local LLM
+
+### Install FFmpeg
+
+**Windows:** Download from https://ffmpeg.org/download.html and add to PATH  
+**macOS:** `brew install ffmpeg`  
+**Linux:** `sudo apt install ffmpeg`
+
+### Install & Start Ollama
+
+```bash
+# Install Ollama from https://ollama.com/
+# Pull the neural-chat model
+ollama pull neural-chat
+
+# Start the Ollama server (runs on localhost:11434)
+ollama serve
 ```
 
 ---
 
-### 2. Semantic Chunking Engine
+## 🚀 Installation & Setup
 
-```python
-Algorithm: split_into_chunks(text, chunk_size=700)
+### 1. Clone the repository
 
-Purpose: 
-  Break long documents into semantic units that preserve meaning
-  while fitting within embedding model context windows
-
-Process:
-  1. Text Normalization
-     - Replace newlines with spaces
-     - Collapse multiple spaces to single space
-     - Strip leading/trailing whitespace
-  
-  2. Sentence Segmentation
-     - Regex: (?<=[.!?])\s+
-     - Splits on periods, exclamation marks, questions
-     - Uses positive lookbehind to preserve punctuation
-  
-  3. Chunk Assembly
-     - Initialize empty chunk
-     - For each sentence:
-       IF current_chunk + sentence < chunk_size:
-         Add sentence to current chunk
-       ELSE:
-         Save current chunk
-         Start new chunk with this sentence
-     - Save final chunk
-
-Design Rationale:
-  - 700 chars ≈ 100-150 words
-  - Fits comfortably in embedding model (512 tokens max)
-  - Preserves sentence boundaries (maintains semantic coherence)
-  - Balances granularity vs. context
-
-Edge Cases Handled:
-  - Empty text → return []
-  - Very long sentences → include full sentence in chunk
-  - No punctuation → single large chunk
-  - Multiple consecutive spaces → normalized
-
-Output:
-  - List of text chunks
-  - Each chunk: string of ~700 chars
-  - No overlap between chunks
+```bash
+git clone https://github.com/your-username/SmartQ-A.git
+cd SmartQ-A
 ```
+
+### 2. Create a virtual environment (recommended)
+
+```bash
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+```
+
+### 3. Install Python dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+> **Note:** The first run will download AI models (~600MB total): `all-MiniLM-L6-v2`, `google/vit-base-patch16-224`, and `openai/whisper-base`. This only happens once.
+
+### 4. (Optional) Install Whisper for video transcription
+
+```bash
+pip install openai-whisper
+```
+
+Without Whisper, videos will still be processed using visual frame analysis only — speech will not be transcribed.
 
 ---
 
-### 3. Embedding Generation
+## ▶️ Running the App
 
-```python
-Model: sentence-transformers/all-MiniLM-L6-v2
-Alternative: sentence-transformers/all-mpnet-base-v2
+Make sure Ollama is running (`ollama serve`) in a separate terminal, then:
 
-Architecture:
-  Input: Text string
-  Model: 
-    - Based on Microsoft MiniLM
-    - 6-layer Transformer
-    - Mean pooling of token embeddings
-  Output: 384-dimensional dense vector
-
-Model Details:
-  - Parameters: 22.7M
-  - Max sequence length: 512 tokens
-  - Training: Trained on 1B+ sentence pairs
-  - Speed: ~2000 sentences/second (CPU)
-  - Speed: ~10000 sentences/second (GPU)
-
-Embedding Properties:
-  - Normalized L2 norm (unit vectors)
-  - Cosine similarity optimized
-  - Semantic meaning preserved
-  - Cross-lingual capabilities (limited)
-
-Mathematical Representation:
-  E(text) = MeanPool(Transformer(Tokenize(text)))
-  where E(text) ∈ ℝ³⁸⁴
-
-Usage in Code:
-  embedding = embedder.encode(chunk_text)
-  # Returns: numpy.ndarray of shape (384,)
-
-Memory Footprint:
-  - Model: ~90MB
-  - Per embedding: 384 * 4 bytes = 1.5KB
-  - 1000 chunks = ~1.5MB in memory
+```bash
+streamlit run app_gui.py
 ```
+
+The app opens in your browser at `http://localhost:8501`.
 
 ---
 
-### 4. Vector Storage & Retrieval
+## 💡 Usage
 
-#### 4.1 Data Structure
-```python
-documents = {
-  'document_name': [
-    {
-      'id': 'document_name_0',
-      'text': 'chunk content here...',
-      'embedding': np.array([0.23, -0.15, ...]),  # 384-dim
-      'type': 'pdf' | 'video' | 'document'
-    },
-    # ... more chunks
-  ]
-}
+### Uploading Documents
 
-Storage Characteristics:
-  - Type: In-memory dictionary
-  - Persistence: ChromaDB (chroma.sqlite3) - optional
-  - Index: Document name → List of chunks
-  - Scalability: Limited by RAM (~10K chunks = ~15MB)
-```
+1. Use the **sidebar** to choose a file (PDF, TXT, MD, or video)
+2. Click **"Process File"** — the system will extract, chunk, and embed all content
+3. The sidebar shows all loaded materials with their chunk counts
+4. You can load **multiple documents** in the same session
 
-#### 4.2 Search Algorithm
-```python
-Function: search(query, k=10)
+### Asking Questions
 
-Process:
-  1. Query Embedding
-     query_vector = embedder.encode(query)
-     # Shape: (384,)
-  
-  2. Similarity Computation
-     For each document:
-       For each chunk:
-         similarity = cosine_similarity(query_vector, chunk_vector)
-         # Formula: dot(A, B) / (norm(A) * norm(B))
-  
-  3. Result Aggregation
-     all_results = []
-     For each chunk:
-       all_results.append({
-         'doc': document_name,
-         'text': chunk_text,
-         'similarity': similarity_score,
-         'type': content_type
-       })
-  
-  4. Ranking
-     all_results.sort(key=lambda x: x['similarity'], reverse=True)
-  
-  5. Top-K Selection
-     return all_results[:k]
+Type any question in the chat input at the bottom. Examples:
 
-Complexity:
-  - Time: O(n * d) where n=total_chunks, d=embedding_dim
-  - Space: O(n)
-  - Optimization: Could use approximate nearest neighbor (ANN)
+- `"Summarize the key points from the video"`
+- `"What does the PDF say about machine learning?"`
+- `"Generate 5 multiple choice questions based on both files"`
+- `"Create a comparison table of concepts from the video and the document"`
+- `"Explain the main topic covered in all uploaded materials"`
 
-Similarity Metric:
-  cosine_similarity(A, B) = (A · B) / (||A|| * ||B||)
-  Range: [-1, 1]
-  Interpretation:
-    1.0 = Identical
-    0.0 = Orthogonal (unrelated)
-   -1.0 = Opposite meaning
-```
+### Query Tips
+
+| Goal | Example Query |
+|------|--------------|
+| Ask about video content only | `"What topics were discussed in the video?"` |
+| Ask about PDF content only | `"What does the document cover about neural networks?"` |
+| Cross-document summary | `"Create a combined summary of both the video and the PDF"` |
+| Generate MCQs | `"Generate 5 MCQs based on both files with an answer key at the end"` |
+| Comparison | `"Create a 3-column markdown table comparing concepts from both sources"` |
 
 ---
 
-### 5. LLM Integration
+## 🔧 Configuration
+
+Key parameters can be adjusted in `smart_qa_complete.py`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `chunk_size` | `800` chars | Target size of each semantic chunk |
+| `overlap_size` | `200` chars | Context overlap between adjacent chunks |
+| `k` (search) | `16` | Number of top chunks retrieved per query |
+| Ollama model | `neural-chat` | Change to `llama2`, `mistral`, `phi`, etc. |
+| Embedding model | `all-MiniLM-L6-v2` | Fallback: `all-mpnet-base-v2` |
+| LLM temperature | `0.5` | Lower = more factual, Higher = more creative |
+| LLM timeout | `180s` | Increase for very long documents |
+
+---
+
+## 📦 Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `streamlit` | Web UI framework |
+| `sentence-transformers` | Dense text embeddings (`all-MiniLM-L6-v2`) |
+| `transformers` | Vision Transformer (ViT) for frame classification |
+| `PyPDF2` | PDF text extraction |
+| `opencv-python` | Video frame extraction |
+| `openai-whisper` | Speech-to-text transcription |
+| `torch` | Deep learning backend |
+| `numpy` / `scipy` | Numerical operations, cosine similarity |
+| `requests` | HTTP calls to Ollama REST API |
+| `Pillow` | Image handling for ViT input |
+| `chromadb` | Optional persistent vector store |
+
+---
+
+## 🤖 Compatible LLM Models (via Ollama)
+
+Any model available in Ollama can be used. To switch, change `"neural-chat"` in `smart_qa_complete.py`:
 
 ```python
-Service: Ollama (Local LLM Server)
-Model: neural-chat (Intel's optimized model)
-API: REST API on localhost:11434
-
-Request Format:
-  POST http://localhost:11434/api/generate
-  Headers: Content-Type: application/json
-  Body: {
-    "model": "neural-chat",
-    "prompt": "<constructed_prompt>",
-    "stream": false,
-    "temperature": 0.5
-  }
-
-Prompt Construction:
-  prompt = f"""You are an intelligent learning assistant.
-
-  Educational Content:
-  {context}  # Top-10 relevant chunks
-
-  Question: {question}
-
-  Provide a detailed answer based on the content."""
-
-Response Format:
-  {
-    "response": "Generated answer text...",
-    "model": "neural-chat",
-    "created_at": "2024-01-01T00:00:00Z",
-    "done": true
-  }
-
-Parameters:
-  - temperature: 0.5 (balanced creativity/accuracy)
-  - stream: false (wait for complete response)
-  - timeout: 180 seconds (3 minutes max)
-
-Error Handling:
-  - Timeout → Inform user, suggest shorter context
-  - Connection refused → Check if Ollama is running
-  - 404 Model not found → Suggest: ollama pull neural-chat
-  - 500 Server error → Retry or report issue
-
-Alternative Models (Compatible):
-  - llama2 (Meta's model)
-  - mistral (Mistral AI)
-  - codellama (Code-focused)
-  - phi (Microsoft's small model)
+"model": "mistral"   # or "llama2", "phi", "codellama", "gemma", etc.
 ```
 
----
-
-## 💾 Data Flow Diagram
-
-### Adding Material Flow
-```
-User Input: "add lecture.mp4"
-    │
-    ▼
-┌─────────────────────┐
-│ File Path Validation│
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Content Extraction  │ → [FFmpeg] → Audio WAV
-│                     │ → [Whisper] → Transcript
-│                     │ → [OpenCV] → Frames
-│                     │ → [ViT] → Labels
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Content Assembly    │ → Combine transcript + visual data
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Semantic Chunking   │ → ~700 char chunks
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Batch Embedding     │ → 384-dim vectors
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Memory Storage      │ → documents[name] = chunks
-└─────────────────────┘
-```
-
-### Query Processing Flow
-```
-User Input: "What is X?"
-    │
-    ▼
-┌─────────────────────┐
-│ Query Embedding     │ → 384-dim vector
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Similarity Search   │ → Compute cosine similarity
-│ (All Chunks)        │ → Sort by relevance
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Top-K Retrieval     │ → Get 10 best matches
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Context Assembly    │ → Concatenate chunks
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ LLM API Call        │ → Ollama neural-chat
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Answer Display      │ → Print to user
-└─────────────────────┘
-```
+Pull any model with: `ollama pull <model-name>`
 
 ---
 
-## 🔬 Performance Analysis
+## ⚡ Performance Notes
 
-### Benchmarks (10-minute lecture video)
-
-| Operation | Time | Notes |
-|-----------|------|-------|
-| Video metadata extraction | <1s | Fast |
-| Audio extraction (FFmpeg) | ~30s | I/O bound |
-| Speech transcription (CPU) | ~20min | Compute intensive |
-| Speech transcription (GPU) | ~10min | 2x speedup |
-| Frame extraction (10 frames) | ~10s | I/O bound |
-| Vision classification | ~20s | GPU helps |
-| Text chunking | <1s | Fast |
-| Embedding generation (50 chunks) | ~5s | Batch processing |
-| **Total (CPU)** | **~25min** | First run |
-| **Total (GPU)** | **~12min** | First run |
-| **Subsequent queries** | **<2s** | Cached embeddings |
-
-### Memory Usage
-
-| Component | Memory |
-|-----------|--------|
-| SentenceTransformer model | ~90MB |
-| Vision Transformer model | ~350MB |
-| Whisper base model | ~140MB |
-| Embeddings (1000 chunks) | ~1.5MB |
-| Document text (1000 chunks) | ~0.7MB |
-| **Total (models loaded)** | **~580MB** |
-| **Total (with data)** | **~582MB** |
-
-### Scalability Limits
-
-| Metric | Current Limit | Bottleneck |
-|--------|---------------|------------|
-| Documents | ~100 | Memory |
-| Total chunks | ~10,000 | Search O(n) |
-| Chunk size | 512 tokens | Model limit |
-| Video length | ~2 hours | Processing time |
-| PDF pages | ~1000 | None |
+| Task | Approximate Time |
+|------|-----------------|
+| PDF ingestion (50 pages) | ~10–30 seconds |
+| Video ingestion — 10 min (with Whisper, CPU) | ~15–25 minutes |
+| Video ingestion — 10 min (with Whisper, GPU) | ~5–10 minutes |
+| Query response | ~5–30 seconds (depends on LLM + context size) |
+| Subsequent queries (same session) | Fast — embeddings are cached in memory |
 
 ---
 
-## 🔐 Security Considerations
+## 🛠️ Troubleshooting
 
-### Current Implementation
-- ✅ Local processing (no cloud uploads)
-- ✅ No API keys required (uses local models)
-- ✅ No data persistence (in-memory only)
-- ✅ Safe file path handling (Path.resolve())
+**"Please upload and process a document first"** — No file has been ingested. Use the sidebar to upload and click Process File.
 
-### Potential Risks
-- ⚠️ No input validation on file types
-- ⚠️ Arbitrary code execution via malicious PDFs (PyPDF2 vulnerability)
-- ⚠️ Command injection via FFmpeg (subprocess.run)
-- ⚠️ No rate limiting on queries
-- ⚠️ No authentication/authorization
+**"Sorry, I couldn't generate an answer. Make sure Ollama is running."** — Start Ollama with `ollama serve` in a separate terminal and verify it's at `localhost:11434`.
 
-### Recommended Hardening
-1. Add file type validation with magic bytes
-2. Sandbox PDF processing
-3. Escape FFmpeg parameters
-4. Add request rate limiting
-5. Implement user authentication
-6. Add audit logging
-7. Encrypt stored embeddings
-8. Validate file sizes before processing
+**Video has no speech transcription** — Install Whisper: `pip install openai-whisper`. Also ensure FFmpeg is installed and on your system PATH.
+
+**Very slow on first run** — Model downloads (~600MB) happen once on first launch. Subsequent runs are faster.
+
+**Out of memory on large videos** — Reduce `chunk_size` or process shorter video segments.
 
 ---
 
-## 🧪 Testing Strategy
+## 🔮 Roadmap
 
-### Unit Tests (Recommended)
-```python
-tests/
-├── test_extraction.py      # PDF, video, text extraction
-├── test_chunking.py         # Semantic chunking logic
-├── test_embedding.py        # Embedding generation
-├── test_search.py           # Similarity search
-└── test_integration.py      # End-to-end workflows
-```
-
-### Test Cases
-1. **PDF Extraction**
-   - Empty PDF
-   - Multi-page PDF
-   - Scanned PDF (should fail gracefully)
-   - Corrupted PDF
-
-2. **Video Analysis**
-   - Various formats (.mp4, .avi, .mkv)
-   - No audio track
-   - Very short video (<10s)
-   - Very long video (>1hr)
-
-3. **Chunking**
-   - Empty text
-   - Single sentence
-   - No punctuation
-   - Multiple languages
-
-4. **Search**
-   - No documents loaded
-   - Query with no matches
-   - Query matching multiple docs
-   - Empty query
+- [ ] Persistent vector storage with ChromaDB across sessions
+- [ ] Support for `.docx` / `.pptx` document formats
+- [ ] Streaming LLM responses in the chat UI
+- [ ] GPU-accelerated embedding generation
+- [ ] Multi-user session isolation
+- [ ] Export chat history as PDF/markdown
+- [ ] REST API layer (FastAPI) for programmatic access
 
 ---
 
-## 📊 Metrics & Monitoring
+## 📄 License
 
-### Key Metrics to Track
-1. **Performance**
-   - Processing time per document type
-   - Query response time
-   - Embedding generation speed
-
-2. **Accuracy**
-   - Search relevance (manual evaluation)
-   - Answer quality (user feedback)
-   - Transcription accuracy (WER)
-
-3. **Resource Usage**
-   - Memory consumption
-   - CPU utilization
-   - Disk I/O
-
-4. **User Behavior**
-   - Documents processed per session
-   - Queries per document
-   - Command usage distribution
-
----
-
-## 🔄 Future Architecture Improvements
-
-### Planned Enhancements
-1. **Database Migration**
-   - Move from in-memory to persistent ChromaDB
-   - Add SQLite for metadata
-   - Implement incremental indexing
-
-2. **Performance Optimization**
-   - Implement ANN (Approximate Nearest Neighbor)
-   - Add caching layer (Redis)
-   - Batch processing pipeline
-   - GPU acceleration for all models
-
-3. **Scalability**
-   - Distributed processing (Celery)
-   - Microservices architecture
-   - API layer (FastAPI)
-   - Load balancing for multiple users
-
-4. **Features**
-   - Multi-modal embeddings (CLIP)
-   - Real-time video streaming
-   - Incremental learning
-   - Active learning for query refinement
-
----
-
-
-This technical documentation provides a comprehensive understanding of the system's internals for developers who want to contribute or extend the functionality.
+This project is open source. See `LICENSE` for details.
