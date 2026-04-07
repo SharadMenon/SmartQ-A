@@ -28,8 +28,9 @@ chroma_db/
 *.jpg
 *.jpeg
 
-# Extracted texts
+# Extracted texts & Forms
 idf_extracted.txt
+IDF_Form_B_Completed.md
 
 # Do not ignore Python and Markdown files
 !*.py
