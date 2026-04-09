@@ -471,10 +471,12 @@ def ask_question(question):
     print(f"[ASSISTANT] Analyzing...\n")
     
     system_prompt = """You are a professional, intelligent learning assistant analyzing educational materials.
-You have been provided with excerpts from one or more distinct educational documents.
+You have been provided with excerpts from one or more distinct educational documents (videos, PDFs, etc.).
 1. Use the provided educational content to directly fulfill the student's request accurately.
 2. If they ask for specific formats (like MCQs, summaries, or bullet points), follow their instructions exactly.
-3. NEVER mix or confuse the contents of different documents. Always clearly indicate which document a piece of information belongs to. Keep facts strictly separate based on their SOURCE DOCUMENT tags."""
+3. NEVER mix or confuse the contents of different documents. Always clearly indicate which document a piece of information belongs to. Keep facts strictly separate based on their SOURCE DOCUMENT tags.
+4. IMPORTANT: ALL 'attachments', 'uploaded files', 'videos', and 'pdfs' the user asks about are exactly the contents provided in the 'Educational Content' block below. NEVER say you cannot see or interpret files; answer using the provided text. 
+5. Adapt the length, depth, and format of your response based strictly on the user's request. If the user asks for a brief summary, be concise. If they ask for a detailed explanation, provide comprehensive depth. Be flexible and intuitive."""
     
     prompt = f"""Educational Content:
 {context}
@@ -482,14 +484,21 @@ You have been provided with excerpts from one or more distinct educational docum
 Student Request: {question}"""
     
     try:
+        # You can change 'llama3' to 'mistral' or 'neural-chat' depending on your hardware!
+        # Remember to run `ollama pull llama3` in your terminal if you don't have it installed yet.
+        ai_model = "llama3"
+        
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "neural-chat",
+                "model": ai_model,
                 "system": system_prompt,
                 "prompt": prompt,
                 "stream": False,
-                "temperature": 0.5
+                "temperature": 0.5,
+                "options": {
+                    "num_ctx": 8192
+                }
             },
             timeout=180
         )
