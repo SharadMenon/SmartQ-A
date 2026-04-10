@@ -18,7 +18,7 @@ SmartQ-A combines a modern Streamlit web UI with a powerful backend pipeline tha
 - **Semantic chunking with overlap** — Splits content into overlapping ~800-character chunks with 200-character context carry-over for better RAG recall
 - **Dense vector search** — Embeds all content using `sentence-transformers/all-MiniLM-L6-v2` (384-dim) and retrieves top-16 chunks via cosine similarity
 - **Media-type routing** — Automatically detects whether a query is asking about a video, PDF, or both, and routes context accordingly
-- **LLM-powered answers** — Sends retrieved context to a locally running Ollama instance (`neural-chat` model) for grounded, hallucination-resistant responses
+- **LLM-powered answers** — Sends retrieved context to a locally running Ollama instance (`llama3` model) for grounded, hallucination-resistant responses
 - **Persistent session chat** — Full chat history maintained across queries within a session
 - **Multi-document awareness** — Groups retrieved chunks by source document to prevent cross-document answer contamination
 
@@ -61,8 +61,8 @@ SmartQ-A-main/
                     │                          │
       ┌─────────────▼──────┐      ┌────────────▼───────────┐
       │  HuggingFace Models│      │  Ollama (Local LLM)    │
-      │  • all-MiniLM-L6-v2│      │  • neural-chat         │
-      │  • ViT (vision)    │      │  localhost:11434        │
+      │  • all-MiniLM-L6-v2│      │  • llama3              │
+      │  • ViT (vision)    │      │  localhost:11434       │
       │  • Whisper (audio) │      └────────────────────────┘
       └────────────────────┘
 ```
@@ -104,8 +104,8 @@ The search function (`search()`) performs global cosine similarity ranking acros
 
 ```bash
 # Install Ollama from https://ollama.com/
-# Pull the neural-chat model
-ollama pull neural-chat
+# Pull the llama3 model
+ollama pull llama3
 
 # Start the Ollama server (runs on localhost:11434)
 ollama serve
@@ -204,7 +204,7 @@ Key parameters can be adjusted in `smart_qa_complete.py`:
 | `chunk_size` | `800` chars | Target size of each semantic chunk |
 | `overlap_size` | `200` chars | Context overlap between adjacent chunks |
 | `k` (search) | `16` | Number of top chunks retrieved per query |
-| Ollama model | `neural-chat` | Change to `llama2`, `mistral`, `phi`, etc. |
+| Ollama model | `llama3` | Change to `llama2`, `mistral`, `phi`, etc. |
 | Embedding model | `all-MiniLM-L6-v2` | Fallback: `all-mpnet-base-v2` |
 | LLM temperature | `0.5` | Lower = more factual, Higher = more creative |
 | LLM timeout | `180s` | Increase for very long documents |
@@ -231,7 +231,7 @@ Key parameters can be adjusted in `smart_qa_complete.py`:
 
 ## 🤖 Compatible LLM Models (via Ollama)
 
-Any model available in Ollama can be used. To switch, change `"neural-chat"` in `smart_qa_complete.py`:
+Any model available in Ollama can be used. To switch, change `"llama3"` in `smart_qa_complete.py`:
 
 ```python
 "model": "mistral"   # or "llama2", "phi", "codellama", "gemma", etc.
